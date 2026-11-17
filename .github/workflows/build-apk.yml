@@ -1,0 +1,81 @@
+name: Build NavHide APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Use the SDK Manager already installed on the GitHub runner.
+      # Do not use android-actions/setup-android: it may try to install
+      # the obsolete "tools" package.
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          if [[ -z "$SDKMANAGER" ]]; then
+            echo "ERROR: sdkmanager not found under $ANDROID_HOME/cmdline-tools"
+            exit 1
+          fi
+
+          echo "Using SDK manager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build Release APK
+        working-directory: NavHideModule
+        run: gradle --no-daemon clean assembleRelease
+
+      - name: Verify APK exists
+        run: |
+          test -f NavHideModule/app/build/outputs/apk/release/app-release.apk
+
+      - name: Verify ZIP alignment
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" \
+            -c -v 4 \
+            NavHideModule/app/build/outputs/apk/release/app-release.apk
+
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+            verify --verbose --print-certs \
+            NavHideModule/app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NavHide-Release-APK
+          path: NavHideModule/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
